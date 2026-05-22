@@ -1,0 +1,15 @@
+create table listings (
+  id          bigint generated always as identity primary key,
+  csfloat_id  text not null unique,
+  item_id     int references items (id) on delete set null,
+  float_value numeric(10, 8) not null,
+  top_bid     numeric(14, 2),
+  updated_at  timestamptz not null default now()
+);
+
+create index listings_item_id_idx on listings (item_id);
+create index listings_updated_at_idx on listings (updated_at);
+
+create trigger listings_updated_at
+before insert or update on listings
+for each row execute function set_updated_at();

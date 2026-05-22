@@ -1,0 +1,43 @@
+{
+  "name": "float-radar",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "dev": "vite dev",
+    "build": "vite build",
+    "db:push": "SUPABASE_ACCESS_TOKEN=$(node -e \"require('dotenv').config();process.stdout.write(process.env.SUPABASE_ACCESS_TOKEN)\") supabase db push",
+    "db:pull": "SUPABASE_ACCESS_TOKEN=$(node -e \"require('dotenv').config();process.stdout.write(process.env.SUPABASE_ACCESS_TOKEN)\") supabase db pull"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/rbnext/float-radar.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "bugs": {
+    "url": "https://github.com/rbnext/float-radar/issues"
+  },
+  "homepage": "https://github.com/rbnext/float-radar#readme",
+  "dependencies": {
+    "@supabase/supabase-js": "^2.106.1",
+    "@tailwindcss/vite": "^4.3.0",
+    "@tanstack/react-router": "^1.170.7",
+    "@tanstack/react-start": "^1.168.10",
+    "react": "^19.2.6",
+    "react-dom": "^19.2.6",
+    "recharts": "^3.8.1",
+    "tailwindcss": "^4.3.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.9.1",
+    "@types/react": "^19.2.15",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.2",
+    "tsx": "^4.22.3",
+    "typescript": "^6.0.3",
+    "vite": "^8.0.14"
+  }
+}
