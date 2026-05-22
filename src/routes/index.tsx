@@ -11,6 +11,8 @@ type ItemStat = {
   market_hash_name: string
   item_name: string | null
   wear_name: string | null
+  is_stattrak: boolean
+  is_souvenir: boolean
   float_min: number | null
   float_max: number | null
   icon_url: string | null
@@ -113,7 +115,11 @@ function Home() {
                   )}
                 </td>
                 <td className="px-4 py-2.5">
-                  <div className="font-medium text-white">{item.item_name ?? item.market_hash_name}</div>
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <span className="font-medium text-white">{item.item_name ?? item.market_hash_name}</span>
+                    {item.is_stattrak && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-orange-500/15 text-orange-400 border border-orange-500/25">ST</span>}
+                    {item.is_souvenir && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-yellow-500/15 text-yellow-400 border border-yellow-500/25">SV</span>}
+                  </div>
                   <div className="text-[10px] text-slate-600 mono">def {item.def_index} · paint {item.paint_index}</div>
                 </td>
                 <td className="px-4 py-2.5 mono text-xs text-slate-400">

@@ -10,6 +10,8 @@ export type Item = {
   market_hash_name: string
   item_name: string | null
   wear_name: WearName | null
+  is_stattrak: boolean
+  is_souvenir: boolean
   def_index: number | null
   paint_index: number | null
   float_min: number | null
