@@ -17,15 +17,16 @@ export type Item = {
   float_min: number | null
   float_max: number | null
   icon_url: string | null
+  base_price: number | null
   created_at: string
 }
 
-export type Order = {
+export type FloatPrice = {
   id: number
-  csfloat_id: string
-  item_id: number | null
+  item_id: number
   float_value: number
-  price: number | null
+  price: number
+  csfloat_id: string | null
   updated_at: string
 }
 
@@ -37,10 +38,10 @@ export type Database = {
         Insert: Omit<Item, 'id' | 'created_at'>
         Update: Partial<Omit<Item, 'id' | 'created_at'>>
       }
-      orders: {
-        Row: Order
-        Insert: Omit<Order, 'id' | 'updated_at'>
-        Update: Partial<Omit<Order, 'id'>>
+      float_prices: {
+        Row: FloatPrice
+        Insert: Omit<FloatPrice, 'id' | 'updated_at'>
+        Update: Partial<Omit<FloatPrice, 'id'>>
       }
     }
   }

@@ -1,6 +1,6 @@
 import { items } from './items'
-import { orders } from './orders'
+import { floatPrices } from './float-prices'
 
-export const db = { items, orders }
+export const db = { items, floatPrices }
 
-export type { Item, Order, WearName } from './types'
+export type { Item, FloatPrice, WearName } from './types'

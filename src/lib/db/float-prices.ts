@@ -1,61 +1,26 @@
 import { supabase } from '../supabase'
-import type { FloatPrice } from './types'
-
-type UpsertOne = { itemId: number; floatValue: number; price: number }
 
 export const floatPrices = {
-  get(itemId: number): Promise<FloatPrice[]> {
-    return supabase
+  // All anomaly buckets for an item — used for the price chart.
+  // Возвращаем данные, сгруппированные по бакету (округление до 2 знаков),
+  // с max price — так точные float-значения (0.07123…) правильно попадают в бакет 0.07.
+  getBuckets(itemId: number): Promise<{ floatBucket: number; price: number }[]> {
+    return (supabase as any)
       .from('float_prices')
-      .select('*')
+      .select('float_value, price')
       .eq('item_id', itemId)
       .order('float_value')
-      .then(({ data, error }) => {
+      .then(({ data, error }: any) => {
         if (error) throw error
-        return data
-      })
-  },
-
-  upsert(itemId: number, floatValue: number, price: number): Promise<FloatPrice> {
-    return supabase
-      .from('float_prices')
-      .upsert(
-        { item_id: itemId, float_value: floatValue, price },
-        { onConflict: 'item_id,float_value' },
-      )
-      .select()
-      .single()
-      .then(({ data, error }) => {
-        if (error) throw error
-        return data
-      })
-  },
-
-  upsertMany(prices: UpsertOne[]): Promise<FloatPrice[]> {
-    const rows = prices.map(({ itemId, floatValue, price }) => ({
-      item_id: itemId,
-      float_value: floatValue,
-      price,
-    }))
-
-    return supabase
-      .from('float_prices')
-      .upsert(rows, { onConflict: 'item_id,float_value' })
-      .select()
-      .then(({ data, error }) => {
-        if (error) throw error
-        return data
-      })
-  },
-
-  delete(itemId: number, floatValue: number): Promise<void> {
-    return supabase
-      .from('float_prices')
-      .delete()
-      .eq('item_id', itemId)
-      .eq('float_value', floatValue)
-      .then(({ error }) => {
-        if (error) throw error
+        const map = new Map<number, number>()
+        for (const row of data ?? []) {
+          const key = Math.round(Number(row.float_value) * 100) / 100
+          const prev = map.get(key)
+          if (prev == null || Number(row.price) > prev) map.set(key, Number(row.price))
+        }
+        return Array.from(map.entries())
+          .sort(([a], [b]) => a - b)
+          .map(([floatBucket, price]) => ({ floatBucket, price }))
       })
   },
 }
