@@ -29,6 +29,7 @@ type FilterParams = {
   stattrak?: boolean
   def_index?: number
   q?: string
+  sort?: string
 }
 
 const getItems = createServerFn({ method: 'GET' })
@@ -37,7 +38,12 @@ const getItems = createServerFn({ method: 'GET' })
     let query = (supabase as any)
       .from('item_stats')
       .select('*')
-      .order('premium', { ascending: false, nullsFirst: false })
+
+    if (data.sort === 'date') {
+      query = query.order('id', { ascending: false })
+    } else {
+      query = query.order('premium', { ascending: false, nullsFirst: false })
+    }
 
     if (data.wear) query = query.eq('wear_name', data.wear)
     if (data.stattrak) query = query.eq('is_stattrak', true)
@@ -59,12 +65,13 @@ export const Route = createFileRoute('/search')({
     wear: typeof s.wear === 'string' ? s.wear : undefined as string | undefined,
     stattrak: s.stattrak === '1' || s.stattrak === true ? (true as true) : undefined as true | undefined,
     q: typeof s.q === 'string' && s.q ? s.q : undefined as string | undefined,
+    sort: typeof s.sort === 'string' ? s.sort : undefined as string | undefined,
     browse: undefined as true | undefined,
   }),
   loaderDeps: ({ search }) => search,
-  loader: async ({ deps: { def_index, wear, stattrak, q } }) => {
+  loader: async ({ deps: { def_index, wear, stattrak, q, sort } }) => {
     const [items, weapons] = await Promise.all([
-      getItems({ data: { offset: 0, wear, stattrak: !!stattrak, def_index, q } }),
+      getItems({ data: { offset: 0, wear, stattrak: !!stattrak, def_index, q, sort } }),
       getWeapons(),
     ])
     return { items, weapons }
@@ -106,7 +113,7 @@ function SearchPage() {
   const { items: initialItems, weapons } = Route.useLoaderData()
   const search = Route.useSearch()
   const navigate = useNavigate()
-  const filterKey = `${search.q ?? ''}|${search.wear ?? ''}|${search.stattrak ?? ''}|${search.def_index ?? ''}`
+  const filterKey = `${search.q ?? ''}|${search.wear ?? ''}|${search.stattrak ?? ''}|${search.def_index ?? ''}|${search.sort ?? ''}`
 
   const [inputValue, setInputValue] = useState(search.q ?? '')
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -184,7 +191,7 @@ function SearchPage() {
       {/* ── Desktop layout ── */}
       <div className="flex gap-6 items-start">
         {/* Sidebar (hidden on mobile) */}
-        <aside className="hidden md:block w-44 shrink-0 sticky top-20 space-y-5">
+        <aside className="hidden md:block w-56 shrink-0 sticky top-20 space-y-5">
           {searchInput('')}
 
           {/* Wear filter */}
@@ -204,7 +211,7 @@ function SearchPage() {
           <ItemsGrid
             key={filterKey}
             initialItems={initialItems}
-            search={{ wear: search.wear, stattrak: !!search.stattrak, def_index: search.def_index, q: search.q }}
+            search={{ wear: search.wear, stattrak: !!search.stattrak, def_index: search.def_index, q: search.q, sort: search.sort }}
           />
         </div>
       </div>
@@ -281,15 +288,46 @@ function StatTrakToggle({ active }: { active: boolean }) {
 
 // ─── Cards grid ──────────────────────────────────────────────────────────────
 
+const SORT_OPTIONS = [
+  { value: 'premium', label: 'Top premium' },
+  { value: 'date',    label: 'Newest first' },
+]
+
+function SortSelect() {
+  const search = Route.useSearch()
+  const navigate = useNavigate()
+  const current = search.sort ?? 'premium'
+
+  return (
+    <div className="relative">
+      <select
+        value={current}
+        onChange={(e) =>
+          navigate({ to: '/search', search: { ...search, sort: e.target.value === 'premium' ? undefined : e.target.value } })
+        }
+        className="appearance-none pl-3 pr-7 py-1.5 rounded-lg bg-slate-900/60 border border-slate-700/80 text-xs text-slate-300 focus:outline-none focus:border-slate-500 transition-colors cursor-pointer"
+      >
+        {SORT_OPTIONS.map((o) => (
+          <option key={o.value} value={o.value}>{o.label}</option>
+        ))}
+      </select>
+      <svg className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 w-3 h-3 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+      </svg>
+    </div>
+  )
+}
+
 function ItemsGrid({
   initialItems,
   search,
 }: {
   initialItems: ItemStat[]
-  search: { wear?: string; stattrak?: boolean; def_index?: number; q?: string }
+  search: { wear?: string; stattrak?: boolean; def_index?: number; q?: string; sort?: string }
 }) {
   const [items, setItems] = useState<ItemStat[]>(initialItems)
   const [loading, setLoading] = useState(false)
+  const [refreshing, setRefreshing] = useState(false)
   const [hasMore, setHasMore] = useState(initialItems.length === PAGE_SIZE)
 
   const loadMore = async () => {
@@ -300,6 +338,14 @@ function ItemsGrid({
     setItems((prev) => [...prev, ...next])
     setHasMore(next.length === PAGE_SIZE)
     setLoading(false)
+  }
+
+  const refresh = async () => {
+    setRefreshing(true)
+    const fresh = await getItems({ data: { offset: 0, ...search } })
+    setItems(fresh)
+    setHasMore(fresh.length === PAGE_SIZE)
+    setRefreshing(false)
   }
 
   if (items.length === 0) {
@@ -316,6 +362,29 @@ function ItemsGrid({
 
   return (
     <div className="space-y-4">
+      <div className="flex items-center justify-end">
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={refresh}
+            disabled={refreshing}
+            title="Refresh"
+            className="p-1.5 rounded-lg border border-slate-700/80 text-slate-500 hover:text-slate-300 hover:border-slate-600 transition-colors disabled:opacity-40"
+          >
+            {refreshing ? (
+              <svg className="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-20" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
+                <path className="opacity-80" fill="currentColor" d="M4 12a8 8 0 018-8v3a5 5 0 00-5 5H4z" />
+              </svg>
+            ) : (
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+            )}
+          </button>
+          <SortSelect />
+        </div>
+      </div>
       <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
         {items.map((item) => (
           <ItemCard key={item.id} item={item} />
