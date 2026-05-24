@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from 'react'
 import { db } from '../lib/db'
 import { supabase } from '../lib/supabase'
 import { steamIcon } from '../lib/steam'
+import { Breadcrumbs } from '../lib/breadcrumbs'
 
 const PAGE_SIZE = 18 // 3 cols × 6 rows
 
@@ -162,9 +163,13 @@ function SearchPage() {
 
   return (
     <div className="space-y-5">
+      <Breadcrumbs crumbs={[
+        { label: 'Home', to: '/' },
+        { label: 'Browse' },
+      ]} />
+
       {/* Header */}
       <div>
-        <p className="text-[10px] uppercase tracking-widest text-slate-500 font-semibold mb-1">Float Radar</p>
         <h1 className="text-2xl font-bold text-white">
           Browse{' '}
           <span className="bg-gradient-to-r from-cyan-400 to-violet-400 bg-clip-text text-transparent">
