@@ -84,8 +84,9 @@ function fmtUsd(cents: number) {
   return `$${(cents / 100).toFixed(2)}`;
 }
 
-function csfloatUrl(defIndex: number, paintIndex: number, min: number, max: number) {
+function csfloatUrl(defIndex: number, paintIndex: number, min: number, max: number, marketHashName: string) {
   const params = new URLSearchParams({
+    market_hash_name: marketHashName,
     def_index: String(defIndex),
     paint_index: String(paintIndex),
     min_float: min.toFixed(3),
@@ -400,7 +401,7 @@ function ItemPage() {
               </div>
 
               <a
-                href={csfloatUrl(item.def_index, item.paint_index, selected.floatMin, selected.floatMax)}
+                href={csfloatUrl(item.def_index, item.paint_index, selected.floatMin, selected.floatMax, item.market_hash_name)}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="flex items-center justify-center gap-2 w-full py-2 rounded-lg bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 text-xs font-medium hover:bg-cyan-500/20 transition-colors"
