@@ -52,6 +52,17 @@ function RootDocument({ children }: Readonly<{ children: ReactNode }>) {
         <main className="max-w-6xl mx-auto px-4 py-6">
           {children}
         </main>
+        <footer className="border-t border-slate-800/60 mt-16">
+          <div className="max-w-6xl mx-auto px-4 py-5 flex items-center justify-between gap-4 flex-wrap">
+            <div className="flex items-center gap-2">
+              <div className="w-5 h-5 rounded bg-gradient-to-br from-cyan-500/30 to-violet-600/30 border border-cyan-500/20 flex items-center justify-center text-[8px] font-bold text-cyan-300">FR</div>
+              <span className="text-xs text-slate-600 font-medium">Float Radar</span>
+            </div>
+            <p className="text-xs text-slate-700">
+              © {new Date().getFullYear()} Float Radar. All rights reserved. Not affiliated with Valve or Steam.
+            </p>
+          </div>
+        </footer>
         <Scripts />
       </body>
     </html>

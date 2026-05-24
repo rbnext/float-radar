@@ -13,7 +13,6 @@ type ItemStat = {
   is_souvenir: boolean
   icon_url: string | null
   premium: number | null
-  // bucket where the highest price was observed
   peak_bucket: { min: number; max: number } | null
 }
 
@@ -32,13 +31,11 @@ const getStats = createServerFn({ method: 'GET' })
         .from('item_stats')
         .select('id, market_hash_name, item_name, wear_name, is_stattrak, is_souvenir, icon_url, premium')
         .order('premium', { ascending: false, nullsFirst: false })
-        .limit(5),
+        .limit(6),
     ])
 
     const rawItems: any[] = topRes.data ?? []
 
-    // For each top item, find the float bucket with the highest price
-    // float_prices now stores only anomaly buckets — pick the peak one per item
     let peakBuckets: Record<number, { min: number; max: number }> = {}
     if (rawItems.length > 0) {
       const ids = rawItems.map((i) => i.id)
@@ -80,13 +77,39 @@ export const Route = createFileRoute('/')({
   loader: () => getStats(),
 })
 
+const FAQ: { q: string; a: string }[] = [
+  {
+    q: 'What is a float anomaly?',
+    a: 'A float anomaly is when buyers on the market are willing to pay significantly more for a skin in a specific 0.01-wide float range compared to the average price. This happens because certain float values are considered rare or desirable.',
+  },
+  {
+    q: 'How does Float Radar detect anomalies?',
+    a: 'For each skin we scan buy orders bucket by bucket (every 0.01 float range). Orders with a float filter reveal how much buyers specifically want that range. We compare that to the base price — orders without any float filter — to calculate the premium.',
+  },
+  {
+    q: 'What is the base price?',
+    a: 'The base price is determined by buy orders that have no float filter at all. These buyers just want the skin regardless of float, so their bid reflects the true market average — not a float-specific premium.',
+  },
+  {
+    q: 'Which markets does this work for?',
+    a: 'The anomaly pattern is market-agnostic. We collect data from CSFloat buy orders, but the premium percentage you see here applies anywhere — if buyers on one platform overpay for a float range, the same demand exists everywhere.',
+  },
+  {
+    q: 'How do I use this to my advantage?',
+    a: 'If you own a skin in a high-anomaly float range, you can list it at a premium on float-aware platforms. If you\'re buying, avoid overpaying for ranges with high anomaly scores unless you specifically want that float.',
+  },
+  {
+    q: 'How often is data updated?',
+    a: 'Data is refreshed periodically by our scanner. Each run checks buy orders for every 0.01 bucket across tracked skins and updates the database with the latest premiums.',
+  },
+]
+
 function LandingPage() {
   const stats = Route.useLoaderData()
-  const navigate = useNavigate()
   const topPremium = stats.topItems[0]?.premium
 
   return (
-    <div className="space-y-14">
+    <div className="space-y-16">
       {/* Hero */}
       <div className="text-center pt-14 pb-4">
         <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 text-xs font-medium mb-6">
@@ -136,81 +159,123 @@ function LandingPage() {
         />
       </div>
 
-      {/* Top items */}
+      {/* Top items — cards */}
       {stats.topItems.length > 0 && (
-        <div className="space-y-3">
+        <div className="space-y-4">
           <div className="flex items-center justify-between">
             <h2 className="text-base font-semibold text-white">Biggest Float Anomalies</h2>
-            <Link to="/search" search={{ def_index: undefined, browse: undefined }} className="text-sm text-cyan-400 hover:text-cyan-300 transition-colors">
+            <Link
+              to="/search"
+              search={{ def_index: undefined, browse: undefined }}
+              className="text-sm text-cyan-400 hover:text-cyan-300 transition-colors"
+            >
               View all →
             </Link>
           </div>
 
-          <div className="overflow-hidden rounded-xl border border-slate-700/80">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="bg-slate-900/80 text-left border-b border-slate-700/80">
-                  <th className="w-[56px]" />
-                  <th className="px-4 py-3 text-[11px] uppercase tracking-wider text-slate-500 font-medium">Skin</th>
-                  <th className="px-4 py-3 text-[11px] uppercase tracking-wider text-slate-500 font-medium">Float range</th>
-                  <th className="px-4 py-3 text-[11px] uppercase tracking-wider text-slate-500 font-medium text-right">Anomaly</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-800/60">
-                {stats.topItems.map((item) => (
-                  <tr
-                    key={item.id}
-                    onClick={() => navigate({ to: '/item/$id', params: { id: String(item.id) } })}
-                    className="hover:bg-slate-800/40 transition-colors cursor-pointer"
-                  >
-                    <td className="pl-3 pr-2 py-2">
-                      {steamIcon(item.icon_url) ? (
-                        <img src={steamIcon(item.icon_url)!} alt="" className="h-12 w-12 object-contain" />
-                      ) : (
-                        <div className="h-12 w-12 bg-slate-800/50 rounded" />
-                      )}
-                    </td>
-                    <td className="px-4 py-2.5">
-                      <div className="flex items-center gap-1.5 flex-wrap">
-                        <span className="font-medium text-white text-sm">
-                          {item.item_name ?? item.market_hash_name}
-                        </span>
-                        {item.is_stattrak && (
-                          <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-orange-500/15 text-orange-400 border border-orange-500/25">ST</span>
-                        )}
-                      </div>
-                      <div className="text-xs text-slate-500 mt-0.5">{item.wear_name ?? '—'}</div>
-                    </td>
-                    <td className="px-4 py-2.5">
-                      {item.peak_bucket ? (
-                        <span className="inline-flex items-center gap-1 mono text-xs px-2 py-0.5 rounded-md bg-cyan-500/10 border border-cyan-500/20 text-cyan-300">
-                          {item.peak_bucket.min.toFixed(2)}
-                          <span className="text-cyan-500/50">–</span>
-                          {item.peak_bucket.max.toFixed(2)}
-                        </span>
-                      ) : (
-                        <span className="text-slate-700">—</span>
-                      )}
-                    </td>
-                    <td className="px-4 py-2.5 text-right">
-                      {item.premium != null && Number(item.premium) > 0 ? (
-                        <span className={`mono font-semibold ${Number(item.premium) >= 50 ? 'text-emerald-300' : 'text-cyan-300'}`}>
-                          +{Number(item.premium).toFixed(1)}%
-                        </span>
-                      ) : (
-                        <span className="text-slate-700">—</span>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            {stats.topItems.map((item) => (
+              <ItemCard key={item.id} item={item} />
+            ))}
           </div>
         </div>
       )}
+
+      {/* FAQ */}
+      <div className="space-y-4">
+        <h2 className="text-base font-semibold text-white">How it works</h2>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          {FAQ.map((entry) => (
+            <div
+              key={entry.q}
+              className="rounded-xl border border-slate-700/80 bg-slate-900/40 p-5 space-y-2"
+            >
+              <p className="text-sm font-semibold text-white leading-snug">{entry.q}</p>
+              <p className="text-[13px] text-slate-500 leading-relaxed">{entry.a}</p>
+            </div>
+          ))}
+        </div>
+      </div>
     </div>
   )
 }
+
+function ItemCard({ item }: { item: ItemStat }) {
+  const premium = item.premium != null ? Number(item.premium) : null
+  const isHot = premium != null && premium >= 50
+
+  return (
+    <Link
+      to="/item/$id"
+      params={{ id: String(item.id) }}
+      className="group relative flex flex-col rounded-xl border border-slate-700/80 bg-slate-900/40 hover:border-slate-600/80 hover:bg-slate-800/40 transition-all overflow-hidden"
+    >
+      {/* top accent bar */}
+      {premium != null && (
+        <div
+          className={`absolute top-0 left-0 right-0 h-[2px] ${isHot ? 'bg-emerald-400' : 'bg-cyan-500'}`}
+        />
+      )}
+
+      <div className="flex items-center gap-3 p-4 pt-5">
+        {/* image */}
+        <div className="shrink-0 w-16 h-16 flex items-center justify-center">
+          {steamIcon(item.icon_url) ? (
+            <img
+              src={steamIcon(item.icon_url)!}
+              alt=""
+              className="h-14 object-contain drop-shadow-lg group-hover:scale-105 transition-transform duration-200"
+            />
+          ) : (
+            <div className="h-14 w-14 rounded-lg bg-slate-800/60" />
+          )}
+        </div>
+
+        {/* info */}
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-1.5 flex-wrap mb-0.5">
+            <span className="text-sm font-semibold text-white leading-tight truncate">
+              {item.item_name ?? item.market_hash_name}
+            </span>
+            {item.is_stattrak && (
+              <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-orange-500/15 text-orange-400 border border-orange-500/25 shrink-0">
+                ST
+              </span>
+            )}
+            {item.is_souvenir && (
+              <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-yellow-500/15 text-yellow-400 border border-yellow-500/25 shrink-0">
+                SV
+              </span>
+            )}
+          </div>
+          <p className="text-xs text-slate-500">{item.wear_name ?? '—'}</p>
+
+          {item.peak_bucket && (
+            <span className="inline-flex items-center gap-1 mono text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/10 border border-cyan-500/20 text-cyan-300 mt-1.5">
+              {item.peak_bucket.min.toFixed(2)}
+              <span className="text-cyan-500/50">–</span>
+              {item.peak_bucket.max.toFixed(2)}
+            </span>
+          )}
+        </div>
+
+        {/* premium badge */}
+        {premium != null && premium > 0 && (
+          <div className="shrink-0 text-right">
+            <div
+              className={`mono text-xl font-bold ${isHot ? 'text-emerald-300' : 'text-cyan-300'}`}
+            >
+              +{premium.toFixed(1)}%
+            </div>
+            <div className="text-[10px] text-slate-600 mt-0.5">anomaly</div>
+          </div>
+        )}
+      </div>
+    </Link>
+  )
+}
+
+// ─── Stat card ────────────────────────────────────────────────
 
 const ACCENT_STYLES = {
   violet: {
@@ -247,11 +312,8 @@ function StatCard({
   const s = ACCENT_STYLES[accent]
   return (
     <div className={`relative overflow-hidden rounded-xl border ${s.border} bg-slate-900/40`}>
-      {/* colored top bar */}
       <div className={`absolute top-0 left-0 right-0 h-[2px] ${s.topBar}`} />
-
       <div className="p-5 pt-6 flex flex-col items-center text-center">
-        {/* icon in a ring */}
         <div className={`inline-flex items-center justify-center w-10 h-10 rounded-lg border ${s.iconRing} mb-4`}>
           {icon}
         </div>
@@ -262,21 +324,17 @@ function StatCard({
   )
 }
 
-// Crosshair — skins tracked
+// ─── Icons ───────────────────────────────────────────────────
+
 function IconCrosshair({ className }: { className?: string }) {
   return (
     <svg width="28" height="28" viewBox="0 0 28 28" fill="none" className={className}>
       <circle cx="14" cy="14" r="6" stroke="currentColor" strokeWidth="1.5" />
       <circle cx="14" cy="14" r="1.5" fill="currentColor" />
-      {/* top */}
       <line x1="14" y1="2" x2="14" y2="7" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-      {/* bottom */}
       <line x1="14" y1="21" x2="14" y2="26" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-      {/* left */}
       <line x1="2" y1="14" x2="7" y2="14" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-      {/* right */}
       <line x1="21" y1="14" x2="26" y2="14" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-      {/* corner ticks */}
       <line x1="2" y1="4" x2="5" y2="4" stroke="currentColor" strokeWidth="1" strokeLinecap="round" opacity="0.4" />
       <line x1="4" y1="2" x2="4" y2="5" stroke="currentColor" strokeWidth="1" strokeLinecap="round" opacity="0.4" />
       <line x1="23" y1="4" x2="26" y2="4" stroke="currentColor" strokeWidth="1" strokeLinecap="round" opacity="0.4" />
@@ -289,18 +347,14 @@ function IconCrosshair({ className }: { className?: string }) {
   )
 }
 
-// Order book bars — buy orders
 function IconOrders({ className }: { className?: string }) {
   return (
     <svg width="28" height="28" viewBox="0 0 28 28" fill="none" className={className}>
-      {/* bars ascending left to right */}
       <rect x="2"  y="20" width="4" height="6"  rx="1" fill="currentColor" opacity="0.35" />
       <rect x="8"  y="15" width="4" height="11" rx="1" fill="currentColor" opacity="0.5" />
       <rect x="14" y="10" width="4" height="16" rx="1" fill="currentColor" opacity="0.7" />
       <rect x="20" y="4"  width="4" height="22" rx="1" fill="currentColor" />
-      {/* baseline */}
       <line x1="1" y1="26.5" x2="27" y2="26.5" stroke="currentColor" strokeWidth="1" opacity="0.25" />
-      {/* small tick marks on top of bars */}
       <line x1="4"  y1="19" x2="4"  y2="17" stroke="currentColor" strokeWidth="1" strokeLinecap="round" opacity="0.3" />
       <line x1="10" y1="14" x2="10" y2="12" stroke="currentColor" strokeWidth="1" strokeLinecap="round" opacity="0.3" />
       <line x1="16" y1="9"  x2="16" y2="7"  stroke="currentColor" strokeWidth="1" strokeLinecap="round" opacity="0.3" />
@@ -309,24 +363,18 @@ function IconOrders({ className }: { className?: string }) {
   )
 }
 
-// Radar sweep — anomaly detector
 function IconRadar({ className }: { className?: string }) {
   return (
     <svg width="28" height="28" viewBox="0 0 28 28" fill="none" className={className}>
-      {/* outer rings */}
       <circle cx="14" cy="14" r="12" stroke="currentColor" strokeWidth="1.2" opacity="0.25" />
       <circle cx="14" cy="14" r="8"  stroke="currentColor" strokeWidth="1.2" opacity="0.4" />
       <circle cx="14" cy="14" r="4"  stroke="currentColor" strokeWidth="1.2" opacity="0.6" />
-      {/* center dot */}
       <circle cx="14" cy="14" r="1.2" fill="currentColor" />
-      {/* sweep line */}
       <line x1="14" y1="14" x2="24" y2="6" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" opacity="0.9" />
-      {/* crosshair guides */}
       <line x1="14" y1="2"  x2="14" y2="4"  stroke="currentColor" strokeWidth="1" strokeLinecap="round" opacity="0.3" />
       <line x1="14" y1="24" x2="14" y2="26" stroke="currentColor" strokeWidth="1" strokeLinecap="round" opacity="0.3" />
       <line x1="2"  y1="14" x2="4"  y2="14" stroke="currentColor" strokeWidth="1" strokeLinecap="round" opacity="0.3" />
       <line x1="24" y1="14" x2="26" y2="14" stroke="currentColor" strokeWidth="1" strokeLinecap="round" opacity="0.3" />
-      {/* anomaly blip */}
       <circle cx="21" cy="8" r="1.8" fill="currentColor" opacity="0.85" />
       <circle cx="21" cy="8" r="3.5" stroke="currentColor" strokeWidth="0.8" opacity="0.3" />
     </svg>

@@ -1,6 +1,6 @@
 import { Link, createFileRoute, notFound } from "@tanstack/react-router";
 import { createServerFn } from "@tanstack/react-start";
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import {
   BarChart,
   Bar,
@@ -75,6 +75,14 @@ function ItemPage() {
     bucketsWithData[0] ?? null
   );
 
+  const [copied, setCopied] = useState(false);
+  const copyName = useCallback(() => {
+    navigator.clipboard.writeText(item.market_hash_name).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    });
+  }, [item.market_hash_name]);
+
   const pcts = bucketsWithData.map((b) => b.pct);
   const maxPct = pcts.length ? Math.max(...pcts) : null;
   // когда данных совсем нет — рисуем все бары на полную высоту (domain [0,1])
@@ -113,6 +121,23 @@ function ItemPage() {
               </h1>
               {item.is_stattrak && <span className="text-xs font-semibold px-2 py-0.5 rounded bg-orange-500/15 text-orange-400 border border-orange-500/25">StatTrak™</span>}
               {item.is_souvenir && <span className="text-xs font-semibold px-2 py-0.5 rounded bg-yellow-500/15 text-yellow-400 border border-yellow-500/25">Souvenir</span>}
+              <button
+                type="button"
+                onClick={copyName}
+                title={copied ? "Copied!" : item.market_hash_name}
+                className="text-slate-600 hover:text-slate-300 transition-colors"
+              >
+                {copied ? (
+                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-emerald-400">
+                    <polyline points="20 6 9 17 4 12" />
+                  </svg>
+                ) : (
+                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                  </svg>
+                )}
+              </button>
             </div>
             <p className="text-sm text-slate-500 mt-0.5">
               {item.market_hash_name && (
