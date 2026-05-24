@@ -1,11 +1,11 @@
 import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
 import { createServerFn } from '@tanstack/react-start'
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { db } from '../lib/db'
 import { supabase } from '../lib/supabase'
 import { steamIcon } from '../lib/steam'
 
-const PAGE_SIZE = 10
+const PAGE_SIZE = 18 // 3 cols × 6 rows
 
 type ItemStat = {
   id: number
@@ -23,51 +23,76 @@ type ItemStat = {
   premium: number | null
 }
 
-const getTopItems = createServerFn({ method: 'GET' })
-  .inputValidator((offset: number) => offset)
-  .handler(async ({ data: offset }) => {
-    const { data, error } = await (supabase as any)
+type FilterParams = {
+  offset: number
+  wear?: string
+  stattrak?: boolean
+  def_index?: number
+  q?: string
+}
+
+const getItems = createServerFn({ method: 'GET' })
+  .inputValidator((p: FilterParams) => p)
+  .handler(async ({ data }) => {
+    let query = (supabase as any)
       .from('item_stats')
       .select('*')
       .order('premium', { ascending: false, nullsFirst: false })
-      .range(offset, offset + PAGE_SIZE - 1)
+
+    if (data.wear) query = query.eq('wear_name', data.wear)
+    if (data.stattrak) query = query.eq('is_stattrak', true)
+    if (data.def_index != null) query = query.eq('def_index', data.def_index)
+    if (data.q) query = query.ilike('market_hash_name', `%${data.q}%`)
+
+    query = query.range(data.offset, data.offset + PAGE_SIZE - 1)
+    const { data: rows, error } = await query
     if (error) throw error
-    return data as ItemStat[]
+    return (rows ?? []) as ItemStat[]
   })
 
 const getWeapons = createServerFn({ method: 'GET' })
   .handler(() => db.items.getWeapons())
 
-const getSkins = createServerFn({ method: 'GET' })
-  .inputValidator((defIndex: number) => defIndex)
-  .handler(({ data }) => db.items.getByDefIndex(data))
-
 export const Route = createFileRoute('/search')({
   validateSearch: (s: Record<string, unknown>) => ({
     def_index: s.def_index != null ? Number(s.def_index) : undefined as number | undefined,
-    browse: (s.browse === '1' || s.browse === true) ? true : undefined as true | undefined,
+    wear: typeof s.wear === 'string' ? s.wear : undefined as string | undefined,
+    stattrak: s.stattrak === '1' || s.stattrak === true ? (true as true) : undefined as true | undefined,
+    q: typeof s.q === 'string' && s.q ? s.q : undefined as string | undefined,
+    browse: undefined as true | undefined,
   }),
   loaderDeps: ({ search }) => search,
-  loader: async ({ deps: { def_index, browse } }) => {
-    if (def_index != null) {
-      const skins = await getSkins({ data: def_index })
-      return { view: 'skins' as const, skins }
-    }
-    if (browse) {
-      const weapons = await getWeapons()
-      return { view: 'weapons' as const, weapons }
-    }
-    const topItems = await getTopItems({ data: 0 })
-    return { view: 'top' as const, topItems }
+  loader: async ({ deps: { def_index, wear, stattrak, q } }) => {
+    const [items, weapons] = await Promise.all([
+      getItems({ data: { offset: 0, wear, stattrak: !!stattrak, def_index, q } }),
+      getWeapons(),
+    ])
+    return { items, weapons }
   },
   component: SearchPage,
 })
 
-function fmt(cents: number) {
-  return '$' + (cents / 100).toFixed(2)
+// ─── Wear config ─────────────────────────────────────────────────────────────
+
+const WEARS = ['Factory New', 'Minimal Wear', 'Field-Tested', 'Well-Worn', 'Battle-Scarred'] as const
+
+const WEAR_SHORT: Record<string, string> = {
+  'Factory New':    'FN',
+  'Minimal Wear':   'MW',
+  'Field-Tested':   'FT',
+  'Well-Worn':      'WW',
+  'Battle-Scarred': 'BS',
 }
 
-const WEAR_COLOR: Record<string, string> = {
+const WEAR_DOT: Record<string, string> = {
+  'Factory New':    'bg-cyan-400',
+  'Minimal Wear':   'bg-blue-400',
+  'Field-Tested':   'bg-yellow-400',
+  'Well-Worn':      'bg-orange-400',
+  'Battle-Scarred': 'bg-red-400',
+}
+
+const WEAR_TEXT: Record<string, string> = {
   'Factory New':    'text-cyan-400',
   'Minimal Wear':   'text-blue-400',
   'Field-Tested':   'text-yellow-400',
@@ -75,244 +100,313 @@ const WEAR_COLOR: Record<string, string> = {
   'Battle-Scarred': 'text-red-400',
 }
 
-function PremiumBadge({ premium }: { premium: number }) {
-  const color = premium >= 50 ? 'text-emerald-300' : premium >= 20 ? 'text-cyan-300' : 'text-slate-400'
-  return <span className={`mono font-semibold ${color}`}>+{premium.toFixed(1)}%</span>
-}
+// ─── Page ─────────────────────────────────────────────────────────────────────
 
 function SearchPage() {
-  const result = Route.useLoaderData()
+  const { items: initialItems, weapons } = Route.useLoaderData()
   const search = Route.useSearch()
+  const navigate = useNavigate()
+  const filterKey = `${search.q ?? ''}|${search.wear ?? ''}|${search.stattrak ?? ''}|${search.def_index ?? ''}`
+
+  const [inputValue, setInputValue] = useState(search.q ?? '')
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // sync input if URL q changes externally (e.g. browser back)
+  useEffect(() => {
+    setInputValue(search.q ?? '')
+  }, [search.q])
+
+  const handleInput = (value: string) => {
+    setInputValue(value)
+    if (debounceRef.current) clearTimeout(debounceRef.current)
+    debounceRef.current = setTimeout(() => {
+      navigate({
+        to: '/search',
+        search: { ...search, q: value || undefined },
+      })
+    }, 400)
+  }
+
+  const searchInput = (className: string) => (
+    <div className={`relative ${className}`}>
+      <svg className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-500 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+      </svg>
+      <input
+        type="text"
+        value={inputValue}
+        onChange={(e) => handleInput(e.target.value)}
+        placeholder="Search…"
+        className="w-full pl-8 pr-7 py-2 rounded-lg bg-slate-900/60 border border-slate-700/80 text-xs text-white placeholder-slate-600 focus:outline-none focus:border-slate-500 transition-colors"
+      />
+      {inputValue && (
+        <button
+          type="button"
+          onClick={() => handleInput('')}
+          className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-600 hover:text-slate-400 transition-colors"
+        >
+          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </button>
+      )}
+    </div>
+  )
 
   return (
-    <div className="space-y-4">
-      {/* Breadcrumb */}
-      <div className="flex items-center gap-2 text-sm text-slate-500">
-        <Link to="/search" search={{ def_index: undefined, browse: undefined }} className="hover:text-slate-300 transition-colors">Search</Link>
-        {search.browse && (
-          <>
-            <span>/</span>
-            <span className="text-slate-300">Browse weapons</span>
-          </>
-        )}
-        {search.def_index != null && result.view === 'skins' && (
-          <>
-            <span>/</span>
-            <Link to="/search" search={{ def_index: undefined, browse: true }} className="hover:text-slate-300 transition-colors">
-              Browse weapons
-            </Link>
-            <span>/</span>
-            <span className="text-slate-300">
-              {result.skins[0]?.market_hash_name?.split(' | ')[0] ?? `def ${search.def_index}`}
-            </span>
-          </>
-        )}
+    <div className="space-y-5">
+      {/* Header */}
+      <div>
+        <p className="text-[10px] uppercase tracking-widest text-slate-500 font-semibold mb-1">Float Radar</p>
+        <h1 className="text-2xl font-bold text-white">
+          Browse{' '}
+          <span className="bg-gradient-to-r from-cyan-400 to-violet-400 bg-clip-text text-transparent">
+            Skins
+          </span>
+        </h1>
+        <p className="text-sm text-slate-500 mt-1">
+          Explore float anomalies — find float ranges where buyers pay a premium.
+        </p>
       </div>
 
-      {result.view === 'top' && <TopItemsView initialItems={result.topItems} />}
-      {result.view === 'weapons' && <WeaponsList weapons={result.weapons} />}
-      {result.view === 'skins' && <SkinsList skins={result.skins} defIndex={search.def_index!} />}
+      {/* ── Mobile filters (hidden on md+) ── */}
+      <div className="md:hidden space-y-3">
+        {searchInput('')}
+        {/* Wear pills — horizontal scroll */}
+        <div className="flex gap-2 overflow-x-auto pb-1 -mx-4 px-4 no-scrollbar">
+          <WearPill label="All" active={!search.wear} wear={undefined} />
+          {WEARS.map((w) => (
+            <WearPill key={w} label={WEAR_SHORT[w]} active={search.wear === w} wear={w} />
+          ))}
+        </div>
+      </div>
+
+      {/* ── Desktop layout ── */}
+      <div className="flex gap-6 items-start">
+        {/* Sidebar (hidden on mobile) */}
+        <aside className="hidden md:block w-44 shrink-0 sticky top-20 space-y-5">
+          {searchInput('')}
+
+          {/* Wear filter */}
+          <div>
+            <p className="text-[10px] uppercase tracking-widest text-slate-500 font-semibold mb-2.5">Wear</p>
+            <div className="space-y-0.5">
+              <WearButton label="All" active={!search.wear} wear={undefined} />
+              {WEARS.map((w) => (
+                <WearButton key={w} label={w} active={search.wear === w} wear={w} />
+              ))}
+            </div>
+          </div>
+        </aside>
+
+        {/* Cards */}
+        <div className="flex-1 min-w-0">
+          <ItemsGrid
+            key={filterKey}
+            initialItems={initialItems}
+            search={{ wear: search.wear, stattrak: !!search.stattrak, def_index: search.def_index, q: search.q }}
+          />
+        </div>
+      </div>
     </div>
   )
 }
 
-function TopItemsView({ initialItems }: { initialItems: ItemStat[] }) {
-  const navigate = useNavigate()
+// ─── Sidebar controls ────────────────────────────────────────────────────────
+
+function WearPill({ label, active, wear }: { label: string; active: boolean; wear: string | undefined }) {
+  const search = Route.useSearch()
+  return (
+    <Link
+      to="/search"
+      search={{ ...search, wear }}
+      className={[
+        'shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-colors whitespace-nowrap border',
+        active
+          ? 'bg-slate-800 border-slate-600 text-white'
+          : 'border-slate-700/60 text-slate-400 hover:border-slate-600 hover:text-slate-200',
+      ].join(' ')}
+    >
+      {wear ? (
+        <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${WEAR_DOT[wear]}`} />
+      ) : (
+        <span className="w-1.5 h-1.5 rounded-full shrink-0 bg-slate-600" />
+      )}
+      {label}
+    </Link>
+  )
+}
+
+function WearButton({ label, active, wear }: { label: string; active: boolean; wear: string | undefined }) {
+  const search = Route.useSearch()
+  return (
+    <Link
+      to="/search"
+      search={{ ...search, wear }}
+      className={[
+        'flex items-center gap-2 w-full px-2.5 py-1.5 rounded-lg text-xs transition-colors',
+        active
+          ? 'bg-slate-800 text-white'
+          : 'text-slate-400 hover:bg-slate-800/50 hover:text-slate-200',
+      ].join(' ')}
+    >
+      {wear ? (
+        <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${WEAR_DOT[wear]}`} />
+      ) : (
+        <span className="w-1.5 h-1.5 rounded-full shrink-0 bg-slate-600" />
+      )}
+      {label}
+    </Link>
+  )
+}
+
+function StatTrakToggle({ active }: { active: boolean }) {
+  const search = Route.useSearch()
+  return (
+    <Link
+      to="/search"
+      search={{ ...search, stattrak: active ? undefined : true }}
+      className={[
+        'flex items-center gap-2 w-full px-2.5 py-1.5 rounded-lg text-xs transition-colors',
+        active
+          ? 'bg-orange-950/50 text-orange-300 border border-orange-500/20'
+          : 'text-slate-400 hover:bg-slate-800/50 hover:text-slate-200',
+      ].join(' ')}
+    >
+      <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${active ? 'bg-orange-400' : 'bg-slate-600'}`} />
+      StatTrak™ only
+    </Link>
+  )
+}
+
+// ─── Cards grid ──────────────────────────────────────────────────────────────
+
+function ItemsGrid({
+  initialItems,
+  search,
+}: {
+  initialItems: ItemStat[]
+  search: { wear?: string; stattrak?: boolean; def_index?: number; q?: string }
+}) {
   const [items, setItems] = useState<ItemStat[]>(initialItems)
   const [loading, setLoading] = useState(false)
   const [hasMore, setHasMore] = useState(initialItems.length === PAGE_SIZE)
 
   const loadMore = async () => {
     setLoading(true)
-    const next = await getTopItems({ data: items.length })
-    setItems(prev => [...prev, ...next])
+    const next = await getItems({
+      data: { offset: items.length, ...search },
+    })
+    setItems((prev) => [...prev, ...next])
     setHasMore(next.length === PAGE_SIZE)
     setLoading(false)
   }
 
-  return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold text-white">Float Anomalies</h1>
-        <div className="flex items-center gap-3">
-          <span className="text-xs text-slate-500">sorted by anomaly size</span>
-          <Link
-            to="/search"
-            search={{ def_index: undefined, browse: true }}
-            className="text-xs px-3 py-1.5 rounded-lg border border-slate-700/80 text-slate-400 hover:text-white hover:border-slate-600 transition-colors"
-          >
-            Browse weapons →
-          </Link>
-        </div>
-      </div>
-
-      {items.length === 0 ? (
-        <div className="text-center py-24 text-slate-500">
-          <p className="text-lg">No skins yet</p>
-          <p className="text-sm mt-1">Items will appear once the parser runs</p>
-        </div>
-      ) : (
-        <>
-          <div className="overflow-hidden rounded-xl border border-slate-700/80">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="bg-slate-900/80 text-left border-b border-slate-700/80">
-                  <th className="w-[70px]" />
-                  <th className="px-4 py-3 text-[11px] uppercase tracking-wider text-slate-500 font-medium">Skin</th>
-                  <th className="px-4 py-3 text-[11px] uppercase tracking-wider text-slate-500 font-medium">Float</th>
-                  <th className="px-4 py-3 text-[11px] uppercase tracking-wider text-slate-500 font-medium text-right">Min</th>
-                  <th className="px-4 py-3 text-[11px] uppercase tracking-wider text-slate-500 font-medium text-right">Max</th>
-                  <th className="px-4 py-3 text-[11px] uppercase tracking-wider text-slate-500 font-medium text-right">Anomaly</th>
-                  <th className="px-4 py-3 text-[11px] uppercase tracking-wider text-slate-500 font-medium text-right">Buckets</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-800/60">
-                {items.map((item) => (
-                  <tr
-                    key={item.id}
-                    onClick={() => navigate({ to: '/item/$id', params: { id: String(item.id) } })}
-                    className="hover:bg-slate-800/40 transition-colors cursor-pointer"
-                  >
-                    <td className="pl-3 pr-2 py-1.5">
-                      {steamIcon(item.icon_url) ? (
-                        <img src={steamIcon(item.icon_url)!} alt="" className="h-[100px] w-[100px] object-contain" />
-                      ) : (
-                        <div className="h-[100px] w-[100px] bg-slate-800/50 rounded" />
-                      )}
-                    </td>
-                    <td className="px-4 py-2.5">
-                      <div className="flex items-center gap-1.5 flex-wrap">
-                        <span className="font-medium text-white">{item.item_name ?? item.market_hash_name}</span>
-                        {item.is_stattrak && (
-                          <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-orange-500/15 text-orange-400 border border-orange-500/25">ST</span>
-                        )}
-                        {item.is_souvenir && (
-                          <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-yellow-500/15 text-yellow-400 border border-yellow-500/25">SV</span>
-                        )}
-                      </div>
-                      {item.wear_name && (
-                        <div className={`text-xs mt-0.5 ${WEAR_COLOR[item.wear_name] ?? 'text-slate-500'}`}>
-                          {item.wear_name}
-                        </div>
-                      )}
-                    </td>
-                    <td className="px-4 py-2.5 mono text-xs text-slate-400">
-                      {item.float_min != null && item.float_max != null
-                        ? `${Number(item.float_min).toFixed(2)} – ${Number(item.float_max).toFixed(2)}`
-                        : '—'}
-                    </td>
-                    <td className="px-4 py-2.5 text-right mono text-sm text-slate-300">
-                      {item.min_price != null ? fmt(Number(item.min_price)) : '—'}
-                    </td>
-                    <td className="px-4 py-2.5 text-right mono text-sm text-slate-300">
-                      {item.max_price != null ? fmt(Number(item.max_price)) : '—'}
-                    </td>
-                    <td className="px-4 py-2.5 text-right">
-                      {item.premium != null && Number(item.premium) > 0
-                        ? <PremiumBadge premium={Number(item.premium)} />
-                        : <span className="text-slate-700">—</span>}
-                    </td>
-                    <td className="px-4 py-2.5 text-right mono text-xs text-slate-500">
-                      {item.anomaly_count}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-
-          {hasMore && (
-            <button
-              type="button"
-              onClick={loadMore}
-              disabled={loading}
-              className="w-full py-2.5 rounded-lg border border-slate-700/80 text-sm text-slate-400 hover:text-white hover:border-slate-600 transition-colors disabled:opacity-50"
-            >
-              {loading ? 'Loading...' : 'Load more'}
-            </button>
-          )}
-        </>
-      )}
-    </div>
-  )
-}
-
-function WeaponsList({ weapons }: { weapons: Awaited<ReturnType<typeof db.items.getWeapons>> }) {
-  if (weapons.length === 0) {
+  if (items.length === 0) {
     return (
-      <div className="text-center py-24 text-slate-500">
-        <p className="text-lg">No data yet</p>
-        <p className="text-sm mt-1">Skins will appear here once the parser runs</p>
+      <div className="flex flex-col items-center justify-center py-32 text-slate-500">
+        <svg className="w-10 h-10 mb-4 opacity-30" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9.172 16.172a4 4 0 015.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+        </svg>
+        <p className="text-base font-medium">No skins found</p>
+        <p className="text-sm mt-1">Try adjusting the filters</p>
       </div>
     )
   }
 
   return (
     <div className="space-y-4">
-      <h1 className="text-xl font-semibold text-white">Browse Weapons</h1>
-      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
-        {weapons.map((w) => (
-          <Link
-            key={w.def_index}
-            to="/search"
-            search={{ def_index: w.def_index, browse: undefined }}
-            className="block p-4 rounded-lg border border-slate-700/80 bg-slate-900/40 hover:border-slate-600 hover:bg-slate-800/40 transition-colors"
-          >
-            <div className="font-semibold text-white text-sm">{w.name}</div>
-            <div className="text-xs text-slate-500 mt-1">{w.count} skins</div>
-          </Link>
+      <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
+        {items.map((item) => (
+          <ItemCard key={item.id} item={item} />
         ))}
       </div>
+
+      {hasMore && (
+        <button
+          type="button"
+          onClick={loadMore}
+          disabled={loading}
+          className="w-full py-2.5 rounded-xl border border-slate-700/80 text-sm text-slate-400 hover:text-white hover:border-slate-600 transition-colors disabled:opacity-40"
+        >
+          {loading ? 'Loading…' : 'Load more'}
+        </button>
+      )}
     </div>
   )
 }
 
-function SkinsList({
-  skins,
-  defIndex,
-}: {
-  skins: Awaited<ReturnType<typeof db.items.getByDefIndex>>
-  defIndex: number
-}) {
-  const weaponName = skins[0]?.market_hash_name?.split(' | ')[0] ?? `Weapon #${defIndex}`
-  const navigate = useNavigate()
+// ─── Item card ────────────────────────────────────────────────────────────────
+
+function ItemCard({ item }: { item: ItemStat }) {
+  const premium = item.premium != null ? Number(item.premium) : null
+  const isHot = premium != null && premium >= 50
+  const isMid = premium != null && premium >= 20
+
+  const accentBar = isHot ? 'bg-emerald-400' : isMid ? 'bg-cyan-400' : premium != null ? 'bg-blue-600' : 'bg-slate-700'
+  const premiumColor = isHot ? 'text-emerald-300' : isMid ? 'text-cyan-300' : 'text-slate-400'
+  const premiumBg = isHot ? 'bg-emerald-950/60 border-emerald-500/20' : isMid ? 'bg-cyan-950/60 border-cyan-500/20' : 'bg-slate-800/60 border-slate-700/40'
 
   return (
-    <div className="space-y-4">
-      <h1 className="text-xl font-semibold text-white">{weaponName}</h1>
-      <div className="overflow-hidden rounded-xl border border-slate-700/80">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="bg-slate-900/80 text-left border-b border-slate-700/80">
-              <th className="px-4 py-3 text-[11px] uppercase tracking-wider text-slate-500 font-medium">Skin</th>
-              <th className="px-4 py-3 text-[11px] uppercase tracking-wider text-slate-500 font-medium">Float range</th>
-              <th className="px-4 py-3 text-[11px] uppercase tracking-wider text-slate-500 font-medium">paint_index</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-800/60">
-            {skins.map((item) => (
-              <tr
-                key={item.id}
-                className="hover:bg-slate-800/40 transition-colors cursor-pointer"
-                onClick={() =>
-                  navigate({
-                    to: '/item/$id',
-                    params: { id: String(item.id) },
-                  })
-                }
-              >
-                <td className="px-4 py-3 text-white font-medium">{item.market_hash_name ?? '—'}</td>
-                <td className="px-4 py-3 text-slate-400 mono text-xs">
-                  {item.float_min != null && item.float_max != null
-                    ? `${item.float_min} – ${item.float_max}`
-                    : '—'}
-                </td>
-                <td className="px-4 py-3 text-slate-500 mono text-xs">{item.paint_index}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+    <Link
+      to="/item/$id"
+      params={{ id: String(item.id) }}
+      className="group relative flex items-center justify-center rounded-xl border border-slate-700/80 bg-slate-900/60 hover:border-slate-600/80 transition-all overflow-hidden aspect-[4/3]"
+    >
+      {/* image — fills the card */}
+      {steamIcon(item.icon_url) ? (
+        <img
+          src={steamIcon(item.icon_url)!}
+          alt=""
+          className="absolute inset-0 w-full h-full object-contain p-6 drop-shadow-xl group-hover:scale-105 transition-transform duration-300"
+        />
+      ) : (
+        <div className="absolute inset-0 bg-slate-800/60" />
+      )}
+
+      {/* gradient overlay at the bottom */}
+      <div className="absolute inset-x-0 bottom-0 h-24 bg-gradient-to-t from-black/80 via-black/40 to-transparent" />
+
+      {/* accent bar top */}
+      <div className={`absolute top-0 left-0 right-0 h-[2px] ${accentBar}`} />
+
+      {/* premium badge — top right */}
+      {premium != null && premium > 0 && (
+        <div className={`absolute top-2.5 right-2.5 mono text-xs font-bold px-2 py-0.5 rounded-md border ${premiumBg} ${premiumColor} backdrop-blur-sm`}>
+          +{premium.toFixed(1)}%
+        </div>
+      )}
+
+      {/* badges top left */}
+      {(item.is_stattrak || item.is_souvenir) && (
+        <div className="absolute top-2.5 left-2.5 flex gap-1">
+          {item.is_stattrak && (
+            <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-orange-500/20 text-orange-400 border border-orange-500/30 backdrop-blur-sm">ST</span>
+          )}
+          {item.is_souvenir && (
+            <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-yellow-500/20 text-yellow-400 border border-yellow-500/30 backdrop-blur-sm">SV</span>
+          )}
+        </div>
+      )}
+
+      {/* info overlay — bottom */}
+      <div className="absolute inset-x-0 bottom-0 px-3 py-2.5">
+        <p className="text-sm font-semibold text-white leading-tight line-clamp-1">
+          {item.item_name ?? item.market_hash_name}
+        </p>
+        <div className="flex items-center justify-between mt-1">
+          {item.wear_name && (
+            <span className={`text-[10px] ${WEAR_TEXT[item.wear_name] ?? 'text-slate-400'}`}>
+              {item.wear_name}
+            </span>
+          )}
+          {item.float_min != null && item.float_max != null && (
+            <span className="mono text-[9px] text-slate-500">
+              {Number(item.float_min).toFixed(2)}–{Number(item.float_max).toFixed(2)}
+            </span>
+          )}
+        </div>
       </div>
-    </div>
+    </Link>
   )
 }

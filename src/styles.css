@@ -6,3 +6,5 @@ body { font-family: Inter, system-ui, sans-serif; }
 .float-bar {
   background: linear-gradient(90deg, #22c55e 0%, #eab308 35%, #f97316 65%, #ef4444 100%);
 }
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
