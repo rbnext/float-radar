@@ -18,8 +18,8 @@ type ItemStat = {
   float_min: number | null
   float_max: number | null
   icon_url: string | null
-  min_price: number | null
-  max_price: number | null
+  base_price: number | null
+  peak_price: number | null
   anomaly_count: number
   premium: number | null
 }
@@ -31,6 +31,8 @@ type FilterParams = {
   def_index?: number
   q?: string
   sort?: string
+  price_min?: number  // cents
+  price_max?: number  // cents
 }
 
 const getItems = createServerFn({ method: 'GET' })
@@ -50,6 +52,8 @@ const getItems = createServerFn({ method: 'GET' })
     if (data.stattrak) query = query.eq('is_stattrak', true)
     if (data.def_index != null) query = query.eq('def_index', data.def_index)
     if (data.q) query = query.ilike('market_hash_name', `%${data.q}%`)
+    if (data.price_min != null) query = query.gte('base_price', data.price_min)
+    if (data.price_max != null) query = query.lte('base_price', data.price_max)
 
     query = query.range(data.offset, data.offset + PAGE_SIZE - 1)
     const { data: rows, error } = await query
@@ -67,12 +71,14 @@ export const Route = createFileRoute('/search')({
     stattrak: s.stattrak === '1' || s.stattrak === true ? (true as true) : undefined as true | undefined,
     q: typeof s.q === 'string' && s.q ? s.q : undefined as string | undefined,
     sort: typeof s.sort === 'string' ? s.sort : undefined as string | undefined,
+    price_min: s.price_min != null ? Number(s.price_min) : undefined as number | undefined,
+    price_max: s.price_max != null ? Number(s.price_max) : undefined as number | undefined,
     browse: undefined as true | undefined,
   }),
   loaderDeps: ({ search }) => search,
-  loader: async ({ deps: { def_index, wear, stattrak, q, sort } }) => {
+  loader: async ({ deps: { def_index, wear, stattrak, q, sort, price_min, price_max } }) => {
     const [items, weapons] = await Promise.all([
-      getItems({ data: { offset: 0, wear, stattrak: !!stattrak, def_index, q, sort } }),
+      getItems({ data: { offset: 0, wear, stattrak: !!stattrak, def_index, q, sort, price_min, price_max } }),
       getWeapons(),
     ])
     return { items, weapons }
@@ -114,7 +120,7 @@ function SearchPage() {
   const { items: initialItems, weapons } = Route.useLoaderData()
   const search = Route.useSearch()
   const navigate = useNavigate()
-  const filterKey = `${search.q ?? ''}|${search.wear ?? ''}|${search.stattrak ?? ''}|${search.def_index ?? ''}|${search.sort ?? ''}`
+  const filterKey = `${search.q ?? ''}|${search.wear ?? ''}|${search.stattrak ?? ''}|${search.def_index ?? ''}|${search.sort ?? ''}|${search.price_min ?? ''}|${search.price_max ?? ''}`
 
   const [inputValue, setInputValue] = useState(search.q ?? '')
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -209,6 +215,9 @@ function SearchPage() {
               ))}
             </div>
           </div>
+
+          {/* Price filter */}
+          <PriceFilter />
         </aside>
 
         {/* Cards */}
@@ -216,7 +225,7 @@ function SearchPage() {
           <ItemsGrid
             key={filterKey}
             initialItems={initialItems}
-            search={{ wear: search.wear, stattrak: !!search.stattrak, def_index: search.def_index, q: search.q, sort: search.sort }}
+            search={{ wear: search.wear, stattrak: !!search.stattrak, def_index: search.def_index, q: search.q, sort: search.sort, price_min: search.price_min, price_max: search.price_max }}
           />
         </div>
       </div>
@@ -291,6 +300,100 @@ function StatTrakToggle({ active }: { active: boolean }) {
   )
 }
 
+function PriceFilter() {
+  const search = Route.useSearch()
+  const navigate = useNavigate()
+
+  // local state in dollars (display)
+  const [fromVal, setFromVal] = useState(
+    search.price_min != null ? String(search.price_min / 100) : ''
+  )
+  const [toVal, setToVal] = useState(
+    search.price_max != null ? String(search.price_max / 100) : ''
+  )
+
+  const debounceFrom = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const debounceTo   = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // sync if URL changes externally
+  useEffect(() => {
+    setFromVal(search.price_min != null ? String(search.price_min / 100) : '')
+  }, [search.price_min])
+  useEffect(() => {
+    setToVal(search.price_max != null ? String(search.price_max / 100) : '')
+  }, [search.price_max])
+
+  const handleFrom = (raw: string) => {
+    setFromVal(raw)
+    if (debounceFrom.current) clearTimeout(debounceFrom.current)
+    debounceFrom.current = setTimeout(() => {
+      const dollars = parseFloat(raw)
+      navigate({
+        to: '/search',
+        search: { ...search, price_min: isNaN(dollars) || raw === '' ? undefined : Math.round(dollars * 100) },
+      })
+    }, 500)
+  }
+
+  const handleTo = (raw: string) => {
+    setToVal(raw)
+    if (debounceTo.current) clearTimeout(debounceTo.current)
+    debounceTo.current = setTimeout(() => {
+      const dollars = parseFloat(raw)
+      navigate({
+        to: '/search',
+        search: { ...search, price_max: isNaN(dollars) || raw === '' ? undefined : Math.round(dollars * 100) },
+      })
+    }, 500)
+  }
+
+  const hasFilter = search.price_min != null || search.price_max != null
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-2.5">
+        <p className="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">Base price</p>
+        {hasFilter && (
+          <button
+            type="button"
+            onClick={() => navigate({ to: '/search', search: { ...search, price_min: undefined, price_max: undefined } })}
+            className="text-[10px] text-slate-600 hover:text-slate-400 transition-colors"
+          >
+            Clear
+          </button>
+        )}
+      </div>
+      <div className="flex items-center gap-1.5">
+        <div className="relative flex-1">
+          <span className="absolute left-2 top-1/2 -translate-y-1/2 text-[10px] text-slate-500 pointer-events-none">$</span>
+          <input
+            type="number"
+            min="0"
+            step="0.01"
+            value={fromVal}
+            onChange={(e) => handleFrom(e.target.value)}
+            placeholder="From"
+            className="w-full pl-5 pr-2 py-1.5 rounded-lg bg-slate-900/60 border border-slate-700/80 text-xs text-white placeholder-slate-600 focus:outline-none focus:border-slate-500 transition-colors [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+          />
+        </div>
+        <span className="text-slate-600 text-xs shrink-0">–</span>
+        <div className="relative flex-1">
+          <span className="absolute left-2 top-1/2 -translate-y-1/2 text-[10px] text-slate-500 pointer-events-none">$</span>
+          <input
+            type="number"
+            min="0"
+            step="0.01"
+            value={toVal}
+            onChange={(e) => handleTo(e.target.value)}
+            placeholder="To"
+            className="w-full pl-5 pr-2 py-1.5 rounded-lg bg-slate-900/60 border border-slate-700/80 text-xs text-white placeholder-slate-600 focus:outline-none focus:border-slate-500 transition-colors [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+          />
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ─── Cards grid ──────────────────────────────────────────────────────────────
 
 const SORT_OPTIONS = [
@@ -328,7 +431,7 @@ function ItemsGrid({
   search,
 }: {
   initialItems: ItemStat[]
-  search: { wear?: string; stattrak?: boolean; def_index?: number; q?: string; sort?: string }
+  search: { wear?: string; stattrak?: boolean; def_index?: number; q?: string; sort?: string; price_min?: number; price_max?: number }
 }) {
   const [items, setItems] = useState<ItemStat[]>(initialItems)
   const [loading, setLoading] = useState(false)
@@ -474,9 +577,9 @@ function ItemCard({ item }: { item: ItemStat }) {
               {item.wear_name}
             </span>
           )}
-          {item.float_min != null && item.float_max != null && (
-            <span className="mono text-[9px] text-slate-500">
-              {Number(item.float_min).toFixed(2)}–{Number(item.float_max).toFixed(2)}
+          {item.base_price != null && (
+            <span className="mono text-sm text-slate-300">
+              <span className="text-[9px] text-slate-500 font-normal">from </span>${(item.base_price / 100).toFixed(2)}
             </span>
           )}
         </div>
